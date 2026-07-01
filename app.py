@@ -1,4 +1,3 @@
-# app.py
 import os
 import shutil
 from pathlib import Path
@@ -9,32 +8,33 @@ from dotenv import load_dotenv
 
 import llm
 from main import process_and_store_pdf
-from evaluator import evaluate_faithfulness
+# Make sure this matches whatever you named the advanced JSON evaluator in evaluator.py
+from evaluator import evaluate_faithfulness 
 
-app = FastAPI(title="findoc", description="query document using RAG")
+app = FastAPI(title="FinDoc", description="Query document using RAG")
 
 # Setup upload directory
 UPLOAD_DIR = Path("uploaded_pdfs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Pydantic models
+# --- Pydantic Models ---
 class questionRequest(BaseModel):
     question: str
-
-class answer_response(BaseModel):
-    answer: str
 
 class HealthResponse(BaseModel):
     status: str
 
+# Flattened to match Streamlit's expectations perfectly
 class answer_response(BaseModel):
-    answer:str
-    status:str
+    answer: str
+    status: str
+    reasoning: str
 
 
 @app.get("/health", response_model=HealthResponse)
 def health_check():
     return {"status": "ok"}
+
 
 @app.post("/upload-pdf/")
 async def upload_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
@@ -55,15 +55,24 @@ async def upload_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(
     
     return {"message": "File uploaded successfully. Processing has started in the background."}
 
+
 @app.post("/ask", response_model=answer_response)
 def ask_question(ques: questionRequest):
     try:
         user_question = ques.question
-        ai_answer,retrived_context = llm.llm_response(user_question)
-        eval_status=evaluate_faithfulness(retrived_context,ai_answer)
+        
+        # 1. Get the answer and the context from your RAG pipeline
+        ai_answer, retrieved_context = llm.llm_response(user_question)
+        
+        # 2. Run the evaluator (which now returns a dictionary)
+        eval_result = evaluate_faithfulness(retrieved_context, ai_answer)
+        
+        # 3. Return the flat structure
         return {
             "answer": ai_answer,
-            "status":eval_status
-            }
+            "status": eval_result.get("status", "FAILED"),
+            "reasoning": eval_result.get("reasoning", "No reasoning returned.")
+        }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Error: {str(e)}")

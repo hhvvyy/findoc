@@ -8,9 +8,6 @@ FASTAPI_URL = "http://127.0.0.1:8000"
 st.set_page_config(page_title="FinDoc AI", page_icon="📄", layout="wide")
 
 # --- CUSTOM CSS ---
-# 1. Pins the disclaimer under the chat bar
-# 2. Adjusts padding to make room for it
-# 3. Softens buttons and chat elements for a premium feel
 st.markdown("""
     <style>
         /* Push the chat input slightly up to make room for the disclaimer */
@@ -30,7 +27,7 @@ st.markdown("""
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             text-align: center;
             width: 100%;
-            pointer-events: none; /* Allows clicking through if needed */
+            pointer-events: none;
         }
         
         /* Premium button styling */
@@ -38,14 +35,6 @@ st.markdown("""
             border-radius: 6px;
             font-weight: 600;
             transition: all 0.2s ease-in-out;
-        }
-        
-        /* Badge styling */
-        .stAlert {
-            margin-top: -15px;
-            margin-bottom: 15px;
-            border-radius: 6px;
-            padding: 10px;
         }
         
         /* Welcome box styling */
@@ -58,18 +47,23 @@ st.markdown("""
         }
     </style>
     
-    <!-- Inject Disclaimer HTML immediately -->
     <div class='disclaimer-footer'>FinDoc is an AI and can make mistakes. Always verify critical financial data.</div>
 """, unsafe_allow_html=True)
 
-# --- SIDEBAR: INGESTION & INFO ---
+# --- STATE INITIALIZATION ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "latest_audit" not in st.session_state:
+    st.session_state.latest_audit = None
+
+# --- SIDEBAR: INGESTION & AUDIT TRAIL ---
 with st.sidebar:
     st.title("📄 FinDoc Intelligence")
     
     # Professional tool description
     st.markdown("""
     **Enterprise-grade document analytics.**
-    Securely ingest financial reports, filings, and statements to extract verified, ground-truth insights via Retrieval-Augmented Generation (RAG).
+    Securely ingest financial reports to extract verified, ground-truth insights via RAG.
     """)
     st.divider()
     
@@ -91,23 +85,36 @@ with st.sidebar:
     
     st.divider()
     
-    # Extra UI Element: Capabilities Expander
+    # --- NEW: LIVE AUDIT TRAIL ---
+    st.subheader("🔍 Live Audit Trail")
+    st.caption("Real-time verification of the most recent AI response.")
+    
+    if st.session_state.latest_audit:
+        audit_status = st.session_state.latest_audit.get("status")
+        audit_reasoning = st.session_state.latest_audit.get("reasoning", "No reasoning provided.")
+        
+        if audit_status == "PASSED":
+            st.success("🟢 **Status: Verified Grounded**\n\n100% backed by document context.")
+        else:
+            st.warning("⚠️ **Status: Confidence Warning**\n\nDetected potentially unsupported claims.")
+            
+        with st.expander("View Judge's Step-by-Step Reasoning"):
+            st.markdown(audit_reasoning)
+    else:
+        st.info("Ask a question to see the evaluator's analysis here.")
+
+    st.divider()
     with st.expander("⚙️ System Capabilities & Limitations", expanded=False):
         st.markdown("""
         - **Supported Formats:** `.pdf` only.
-        - **Data Privacy:** Documents are processed in-memory and embedded locally.
-        - **Hallucination Check:** An automated judge evaluates all AI responses against the raw PDF text to ensure accuracy.
+        - **Data Privacy:** Documents are processed in-memory.
+        - **Hallucination Check:** An automated judge evaluates all AI responses.
         """)
 
 # --- MAIN CHAT INTERFACE ---
 st.title("Analytical Interface")
 
-# Initialize chat history
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
 # --- EMPTY STATE / ONBOARDING ---
-# Fills the empty space shown in your image before the user starts chatting
 if len(st.session_state.messages) == 0:
     st.markdown("""
         <div class="welcome-box">
@@ -121,17 +128,10 @@ if len(st.session_state.messages) == 0:
         </div>
     """, unsafe_allow_html=True)
 
-# Display previous chat messages
+# Display previous chat messages (Clean text only)
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        
-        # Persistent Verification Badge
-        if "status" in message:
-            if message["status"] == "PASSED":
-                st.success("🟢 **Verified Grounded:** Source matched. 100% backed by document context.")
-            elif message["status"] == "FAILED":
-                st.warning("⚠️ **Confidence Warning:** The auditing judge detected potentially unsupported claims.")
 
 # Accept user input
 if user_question := st.chat_input("Query your financial document..."):
@@ -151,23 +151,27 @@ if user_question := st.chat_input("Query your financial document..."):
                 if response.status_code == 200:
                     response_data = response.json()
                     ai_answer = response_data.get("answer")
-                    audit_status = response_data.get("status")
                     
-                    # Render Answer
+                    # Ensure your FastAPI backend is now returning "reasoning" in the JSON!
+                    audit_status = response_data.get("status")
+                    audit_reasoning = response_data.get("reasoning", "No reasoning returned from backend.")
+                    
+                    # 1. Render clean Answer in chat
                     st.markdown(ai_answer)
                     
-                    # Render Verification Badge
-                    if audit_status == "PASSED":
-                        st.success("🟢 **Verified Grounded:** Source matched. 100% backed by document context.")
-                    else:
-                        st.warning("⚠️ **Confidence Warning:** The auditing judge detected potentially unsupported claims.")
-                    
-                    # Save to state
+                    # 2. Save chat history
                     st.session_state.messages.append({
                         "role": "assistant", 
-                        "content": ai_answer,
-                        "status": audit_status
+                        "content": ai_answer
                     })
+                    
+                    # 3. Update the Audit State and force a sidebar refresh
+                    st.session_state.latest_audit = {
+                        "status": audit_status,
+                        "reasoning": audit_reasoning
+                    }
+                    st.rerun() # This instantly refreshes the UI so the sidebar updates
+                    
                 else:
                     st.error(f"Error from server: {response.text}")
                     
